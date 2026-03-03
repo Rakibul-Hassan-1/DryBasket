@@ -271,7 +271,7 @@ export async function placeOrder(
       console.error("❌ Order creation error details:", {
         error: createError,
         message: createError instanceof Error ? createError.message : "Unknown",
-        code: (createError as any)?.code,
+        code: (createError as { code?: string })?.code,
         errorType:
           createError instanceof Error
             ? createError.constructor.name
@@ -283,7 +283,7 @@ export async function placeOrder(
     console.error("❌ Complete error in placeOrder:", error);
     if (error instanceof Error) {
       console.error("Error message:", error.message);
-      console.error("Error code:", (error as any).code);
+      console.error("Error code:", (error as { code?: string }).code);
       console.error("Error stack:", error.stack);
     }
     throw error;
@@ -334,7 +334,7 @@ export async function getOrdersForVerification(): Promise<OrderRecord[]> {
     console.error("❌ Error fetching orders for verification:", error);
     if (error instanceof Error) {
       console.error("Error message:", error.message);
-      console.error("Error code:", (error as any)?.code);
+      console.error("Error code:", (error as { code?: string })?.code);
     }
     return [];
   }

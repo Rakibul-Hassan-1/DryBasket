@@ -132,7 +132,7 @@ export default function CartPage() {
     } catch (error: unknown) {
       console.error("Order error:", error);
       const errorMsg = error instanceof Error ? error.message : "Unknown error";
-      const errorCode = (error as any)?.code || "unknown";
+      const errorCode = (error as { code?: string })?.code || "unknown";
       setMessage(
         `Failed to place order. Error: ${errorCode}. ${errorMsg}. Check browser console for details.`,
       );

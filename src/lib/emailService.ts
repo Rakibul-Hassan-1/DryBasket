@@ -137,7 +137,7 @@ export const generateOrderEmailHTML = (data: EmailData): string => {
 export const sendInvoiceEmail = async (
   email: string,
   orderNumber: string,
-  _pdfBlob: Blob,
+  _pdfBlob?: Blob,
 ): Promise<boolean> => {
   try {
     console.log("📧 Sending invoice email...");
