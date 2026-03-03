@@ -48,6 +48,7 @@ export interface OrderRecord {
   userEmail: string;
   shippingName: string;
   shippingPhone: string;
+  verifiedPhone: string; // Phone verified via OTP
   shippingAddress: string;
   paymentMethod: string;
   status: string;
@@ -139,13 +140,39 @@ export async function seedProductsIfEmpty() {
 
 export async function getProducts(): Promise<Product[]> {
   const productsRef = collection(db, "products");
-  const q = query(productsRef, orderBy("createdAt", "desc"));
-  const snapshot = await getDocs(q);
 
-  return snapshot.docs.map((productDoc) => ({
-    id: productDoc.id,
-    ...(productDoc.data() as Omit<Product, "id">),
-  }));
+  try {
+    const q = query(productsRef, orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+
+    return snapshot.docs.map((productDoc) => ({
+      id: productDoc.id,
+      ...(productDoc.data() as Omit<Product, "id">),
+    }));
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: string }).code)
+        : "";
+
+    if (code.includes("permission-denied")) {
+      return [];
+    }
+
+    const fallbackSnapshot = await getDocs(productsRef);
+    const products = fallbackSnapshot.docs.map((productDoc) => ({
+      id: productDoc.id,
+      ...(productDoc.data() as Omit<Product, "id">),
+    }));
+
+    return products.sort((firstProduct, secondProduct) => {
+      const firstTimestamp =
+        (firstProduct.createdAt as { seconds?: number })?.seconds ?? 0;
+      const secondTimestamp =
+        (secondProduct.createdAt as { seconds?: number })?.seconds ?? 0;
+      return secondTimestamp - firstTimestamp;
+    });
+  }
 }
 
 export async function addProduct(product: Omit<Product, "id" | "createdAt">) {
@@ -177,6 +204,7 @@ export async function placeOrder(
   orderPayload: {
     shippingName: string;
     shippingPhone: string;
+    verifiedPhone?: string; // Phone verified via OTP
     shippingAddress: string;
     paymentMethod: string;
     items: CartItem[];
@@ -250,6 +278,7 @@ export async function placeOrder(
       userEmail,
       shippingName: orderPayload.shippingName,
       shippingPhone: orderPayload.shippingPhone,
+      verifiedPhone: orderPayload.verifiedPhone || orderPayload.shippingPhone, // Use verified phone or fall back to shipping phone
       shippingAddress: orderPayload.shippingAddress,
       paymentMethod: orderPayload.paymentMethod,
       status: "Pending",

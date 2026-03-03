@@ -3,18 +3,30 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
-  orderBy,
+  onSnapshot,
   query,
+  serverTimestamp,
+  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../src/contexts/AuthContext";
 import { db } from "../../src/lib/firebase";
 import { getProducts, OrderRecord, Product } from "../../src/lib/store";
 
 type AdminTab = "overview" | "products" | "orders" | "users";
+
+const isPermissionDeniedError = (error: unknown) => {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: string }).code)
+      : "";
+
+  return code.includes("permission-denied");
+};
 
 export default function AdminDashboard() {
   const { user, loading } = useAuth();
@@ -27,18 +39,44 @@ export default function AdminDashboard() {
     totalRevenue: 0,
     totalUsers: 0,
   });
+  const [dashboardNotice, setDashboardNotice] = useState("");
   const [loadingData, setLoadingData] = useState(true);
 
   const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
   const isAdmin = Boolean(user?.email && user.email === adminEmail);
 
   useEffect(() => {
-    if (!loading && isAdmin) {
-      loadDashboardData();
-    }
-  }, [loading, isAdmin]);
+    const ensureCurrentUserProfile = async () => {
+      if (!user?.uid) return;
 
-  const loadDashboardData = async () => {
+      try {
+        await setDoc(
+          doc(db, "users", user.uid),
+          {
+            uid: user.uid,
+            email: user.email || "",
+            fullName: user.displayName || "N/A",
+            phone: "",
+            address: "",
+            role:
+              user.email && adminEmail && user.email === adminEmail
+                ? "admin"
+                : "customer",
+            lastLoginAt: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (error) {
+        if (!isPermissionDeniedError(error)) {
+          console.error("Failed to ensure user profile:", error);
+        }
+      }
+    };
+
+    ensureCurrentUserProfile();
+  }, [user?.uid, user?.email, user?.displayName, adminEmail]);
+
+  const loadDashboardData = useCallback(async () => {
     setLoadingData(true);
     try {
       // Load products
@@ -46,25 +84,60 @@ export default function AdminDashboard() {
       setProducts(productsData);
 
       // Load all orders
-      const ordersQuery = query(
-        collection(db, "orders"),
-        orderBy("createdAt", "desc"),
+      let ordersData: OrderRecord[] = [];
+      try {
+        const ordersQuery = query(collection(db, "orders"));
+        const ordersSnapshot = await getDocs(ordersQuery);
+        ordersData = ordersSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as OrderRecord[];
+      } catch (error) {
+        if (!isPermissionDeniedError(error)) {
+          console.error("Failed to load orders:", error);
+        }
+
+        setDashboardNotice(
+          "Missing Firestore permission for orders/users. Please deploy admin rules.",
+        );
+      }
+
+      const sortedOrdersData = [...ordersData].sort(
+        (firstOrder, secondOrder) => {
+          const firstTimestamp =
+            (firstOrder.createdAt as { seconds?: number })?.seconds ?? 0;
+          const secondTimestamp =
+            (secondOrder.createdAt as { seconds?: number })?.seconds ?? 0;
+          return secondTimestamp - firstTimestamp;
+        },
       );
-      const ordersSnapshot = await getDocs(ordersQuery);
-      const ordersData = ordersSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as OrderRecord[];
-      setAllOrders(ordersData);
+
+      setAllOrders(sortedOrdersData);
 
       // Load users count
-      const usersQuery = query(collection(db, "users"));
-      const usersSnapshot = await getDocs(usersQuery);
-      const usersCount = usersSnapshot.size;
+      let usersCount = 0;
+      try {
+        const usersQuery = query(collection(db, "users"));
+        const usersSnapshot = await getDocs(usersQuery);
+        usersCount = usersSnapshot.size;
+      } catch (error) {
+        if (!isPermissionDeniedError(error)) {
+          console.error("Failed to load users count from collection:", error);
+        }
+
+        setDashboardNotice(
+          "Firestore rules are blocking full user read. Update rules for admin access.",
+        );
+
+        if (user?.uid) {
+          const currentUserDoc = await getDoc(doc(db, "users", user.uid));
+          usersCount = currentUserDoc.exists() ? 1 : 0;
+        }
+      }
 
       // Calculate stats
       const totalRevenue = ordersData.reduce(
-        (sum, order) => sum + order.grandTotal,
+        (sum, order) => sum + Number(order.grandTotal || 0),
         0,
       );
 
@@ -75,11 +148,25 @@ export default function AdminDashboard() {
         totalUsers: usersCount,
       });
     } catch (error) {
-      console.error("Failed to load dashboard data:", error);
+      if (!isPermissionDeniedError(error)) {
+        console.error("Failed to load dashboard data:", error);
+      }
+
+      if (isPermissionDeniedError(error)) {
+        setDashboardNotice(
+          "Missing Firestore permission for orders/users. Please deploy admin rules.",
+        );
+      }
     } finally {
       setLoadingData(false);
     }
-  };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!loading && isAdmin) {
+      loadDashboardData();
+    }
+  }, [loading, isAdmin, loadDashboardData]);
 
   if (loading) {
     return (
@@ -133,6 +220,12 @@ export default function AdminDashboard() {
               Back to Shop
             </Link>
           </div>
+
+          {dashboardNotice ? (
+            <p className="mb-4 px-4 py-2 rounded-lg bg-amber-100 text-amber-800 font-semibold text-sm">
+              {dashboardNotice}
+            </p>
+          ) : null}
 
           {/* Navigation Tabs */}
           <div className="flex gap-2 border-b-2 border-gray-300 overflow-x-auto pb-3">
@@ -211,6 +304,10 @@ function OverviewTab({
 }) {
   const [editMode, setEditMode] = useState(false);
   const [editStats, setEditStats] = useState(stats);
+
+  useEffect(() => {
+    setEditStats(stats);
+  }, [stats]);
 
   const handleSave = () => {
     // In a real app, save to database
@@ -449,15 +546,172 @@ function ProductsTab({ products }: { products: Product[] }) {
 
 /* Orders Tab */
 function OrdersTab({ orders }: { orders: OrderRecord[] }) {
+  const [displayOrders, setDisplayOrders] = useState<OrderRecord[]>(orders);
+  const [updatingOrder, setUpdatingOrder] = useState<string | null>(null);
+  const [updateMessage, setUpdateMessage] = useState("");
+
+  useEffect(() => {
+    setDisplayOrders(orders);
+  }, [orders]);
+
+  const handleStatusUpdate = async (
+    orderId: string,
+    newStatus:
+      | "Pending"
+      | "Accepted"
+      | "Processing"
+      | "Shipped"
+      | "Delivered"
+      | "Cancelled",
+  ) => {
+    setUpdatingOrder(orderId);
+    setUpdateMessage("");
+
+    try {
+      // Find the order to get customer email
+      const order = displayOrders.find((o) => o.id === orderId);
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      // Update Firestore
+      const orderRef = doc(db, "orders", orderId);
+      await updateDoc(orderRef, {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+      });
+
+      // Update local state immediately without full page reload
+      setDisplayOrders((prevOrders) =>
+        prevOrders.map((o) =>
+          o.id === orderId ? { ...o, status: newStatus } : o,
+        ),
+      );
+
+      // Send email notification to customer
+      try {
+        await fetch("/api/send-notification", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "email",
+            to: order.userEmail,
+            subject: `Order #${order.id.slice(0, 8)} Status Updated - DryBasket`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                  <h1 style="margin: 0;">DryBasket</h1>
+                  <p style="margin: 10px 0 0 0;">Order Status Update</p>
+                </div>
+                <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+                  <p style="font-size: 16px; color: #333; margin-top: 0;">Dear ${order.shippingName},</p>
+                  <p style="font-size: 14px; color: #666; line-height: 1.6;">
+                    Your order status has been updated:
+                  </p>
+                  <div style="background: white; border-left: 4px solid #667eea; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0; font-size: 12px; color: #999;">Order ID</p>
+                    <p style="margin: 5px 0 0 0; font-size: 18px; font-weight: bold; color: #333;">#${order.id.slice(0, 8)}</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 15px 0;">
+                    <p style="margin: 0; font-size: 12px; color: #999;">New Status</p>
+                    <p style="margin: 5px 0 0 0; font-size: 20px; font-weight: bold; color: #667eea;">${newStatus}</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 15px 0;">
+                    <p style="margin: 0; font-size: 12px; color: #999;">Total Amount</p>
+                    <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: bold; color: #333;">TK ${order.grandTotal.toFixed(2)}</p>
+                  </div>
+                  <div style="background: #f0f4ff; padding: 15px; border-radius: 4px; margin: 20px 0;">
+                    <p style="margin: 0; font-size: 13px; color: #667eea;"><strong>Order Details:</strong></p>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">Shipping To: ${order.shippingAddress}</p>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">Phone: ${order.shippingPhone}</p>
+                  </div>
+                  <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+                    <p style="font-size: 12px; color: #999; margin: 0;">
+                      Thank you for shopping with DryBasket!<br>
+                      <strong>Track your order and manage preferences in your account.</strong>
+                    </p>
+                  </div>
+                </div>
+                <div style="background: #f0f4ff; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
+                  <p style="margin: 0; font-size: 11px; color: #999;">
+                    © 2026 DryBasket. All rights reserved.<br>
+                    This is an automated message, please do not reply.
+                  </p>
+                </div>
+              </div>
+            `,
+          }),
+        });
+        console.log("✅ Email notification sent to:", order.userEmail);
+      } catch (emailError) {
+        console.error("⚠️ Failed to send email notification:", emailError);
+        // Don't fail the order update if email fails
+      }
+
+      setUpdateMessage(`✓ Order status updated to ${newStatus}`);
+      setTimeout(() => setUpdateMessage(""), 3000);
+    } catch (error) {
+      console.error("Error updating order:", error);
+      setUpdateMessage("✗ Failed to update order status");
+    } finally {
+      setUpdatingOrder(null);
+    }
+  };
+
+  const statusOptions: Array<
+    | "Pending"
+    | "Accepted"
+    | "Processing"
+    | "Shipped"
+    | "Delivered"
+    | "Cancelled"
+  > = [
+    "Pending",
+    "Accepted",
+    "Processing",
+    "Shipped",
+    "Delivered",
+    "Cancelled",
+  ];
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "Pending":
+        return "bg-yellow-100 text-yellow-800";
+      case "Accepted":
+        return "bg-blue-100 text-blue-800";
+      case "Processing":
+        return "bg-purple-100 text-purple-800";
+      case "Shipped":
+        return "bg-indigo-100 text-indigo-800";
+      case "Delivered":
+        return "bg-green-100 text-green-800";
+      case "Cancelled":
+        return "bg-red-100 text-red-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
   return (
     <div className="bg-white border-2 border-gray-300 rounded-xl p-6">
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Orders</h2>
 
-      {orders.length === 0 ? (
+      {updateMessage && (
+        <div
+          className={`mb-4 p-3 rounded-lg text-sm font-semibold ${
+            updateMessage.includes("✓")
+              ? "bg-green-100 text-green-800"
+              : "bg-red-100 text-red-800"
+          }`}
+        >
+          {updateMessage}
+        </div>
+      )}
+
+      {displayOrders.length === 0 ? (
         <p className="text-gray-600 font-semibold">No orders yet.</p>
       ) : (
         <div className="space-y-4">
-          {orders.map((order) => (
+          {displayOrders.map((order) => (
             <div
               key={order.id}
               className="border-2 border-gray-300 rounded-lg p-4 hover:bg-gray-50"
@@ -476,13 +730,9 @@ function OrdersTab({ orders }: { orders: OrderRecord[] }) {
                     TK {order.grandTotal.toFixed(2)}
                   </p>
                   <span
-                    className={`inline-block px-3 py-1 rounded-full font-bold text-sm mt-1 ${
-                      order.status === "Pending"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : order.status === "Shipped"
-                          ? "bg-blue-100 text-blue-800"
-                          : "bg-green-100 text-green-800"
-                    }`}
+                    className={`inline-block px-3 py-1 rounded-full font-bold text-sm mt-1 ${getStatusColor(
+                      order.status,
+                    )}`}
                   >
                     {order.status}
                   </span>
@@ -522,6 +772,25 @@ function OrdersTab({ orders }: { orders: OrderRecord[] }) {
                   ))}
                 </div>
               </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {statusOptions.map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => handleStatusUpdate(order.id, status)}
+                    disabled={
+                      updatingOrder === order.id || order.status === status
+                    }
+                    className={`px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
+                      order.status === status
+                        ? "bg-indigo-600 text-white cursor-not-allowed"
+                        : "bg-gray-200 text-gray-900 hover:bg-gray-300 disabled:opacity-50"
+                    }`}
+                  >
+                    {updatingOrder === order.id ? "..." : status}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -544,13 +813,21 @@ function UsersTab() {
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [blockingUserId, setBlockingUserId] = useState<string | null>(null);
+  const { user: currentUser } = useAuth();
 
   useEffect(() => {
-    const loadUsers = async () => {
-      try {
-        const usersQuery = query(collection(db, "users"));
-        const usersSnapshot = await getDocs(usersQuery);
+    const loadingTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
+    const usersQuery = query(collection(db, "users"));
+    const unsubscribe = onSnapshot(
+      usersQuery,
+      (usersSnapshot) => {
+        clearTimeout(loadingTimeout);
+        setLoadError("");
         const usersData = usersSnapshot.docs.map((doc) => ({
           id: doc.id,
           fullName: doc.data().fullName || "N/A",
@@ -561,15 +838,58 @@ function UsersTab() {
           blocked: doc.data().blocked || false,
         }));
         setUsers(usersData);
-      } catch (error) {
-        console.error("Failed to load users:", error);
-      } finally {
         setLoading(false);
-      }
-    };
+      },
+      async (error) => {
+        clearTimeout(loadingTimeout);
+        if (!isPermissionDeniedError(error)) {
+          console.error("Failed to load users:", error);
+        }
 
-    loadUsers();
-  }, []);
+        setLoadError(
+          isPermissionDeniedError(error)
+            ? "Missing Firestore permission for reading users. Showing your profile only."
+            : "Could not load all users. Showing your profile only.",
+        );
+
+        try {
+          if (currentUser?.uid) {
+            const profileDoc = await getDoc(doc(db, "users", currentUser.uid));
+            if (profileDoc.exists()) {
+              const profileData = profileDoc.data();
+              setUsers([
+                {
+                  id: profileDoc.id,
+                  fullName: profileData.fullName || "N/A",
+                  email: profileData.email || currentUser.email || "N/A",
+                  phone: profileData.phone || "N/A",
+                  address: profileData.address || "N/A",
+                  role: profileData.role || "customer",
+                  blocked: profileData.blocked || false,
+                },
+              ]);
+            } else {
+              setUsers([]);
+            }
+          }
+        } catch (fallbackError) {
+          if (!isPermissionDeniedError(fallbackError)) {
+            console.error(
+              "Failed to load fallback user profile:",
+              fallbackError,
+            );
+          }
+          setUsers([]);
+        }
+        setLoading(false);
+      },
+    );
+
+    return () => {
+      clearTimeout(loadingTimeout);
+      unsubscribe();
+    };
+  }, [currentUser?.uid, currentUser?.email]);
 
   const handleBlockUnblock = async (
     userId: string,
@@ -583,17 +903,13 @@ function UsersTab() {
       });
 
       // Update local state
-      setUsers(
-        users.map((user) =>
-          user.id === userId ? { ...user, blocked: !currentBlockStatus } : user,
-        ),
-      );
-
       alert(
         `User ${currentBlockStatus ? "unblocked" : "blocked"} successfully!`,
       );
     } catch (error) {
-      console.error("Failed to block/unblock user:", error);
+      if (!isPermissionDeniedError(error)) {
+        console.error("Failed to block/unblock user:", error);
+      }
       alert("Failed to update user status. Please try again.");
     } finally {
       setBlockingUserId(null);
@@ -609,6 +925,12 @@ function UsersTab() {
       <h2 className="text-2xl font-bold text-gray-900 mb-6">
         Registered Users
       </h2>
+
+      {loadError ? (
+        <p className="mb-4 px-3 py-2 rounded bg-amber-100 text-amber-800 text-sm font-semibold">
+          {loadError}
+        </p>
+      ) : null}
 
       {users.length === 0 ? (
         <p className="text-gray-600 font-semibold">No users yet.</p>
