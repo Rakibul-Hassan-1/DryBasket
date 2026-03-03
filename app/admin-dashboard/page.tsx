@@ -1,6 +1,13 @@
 "use client";
 
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  updateDoc,
+} from "firebase/firestore";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../src/contexts/AuthContext";
@@ -202,56 +209,165 @@ function OverviewTab({
     totalUsers: number;
   };
 }) {
+  const [editMode, setEditMode] = useState(false);
+  const [editStats, setEditStats] = useState(stats);
+
+  const handleSave = () => {
+    // In a real app, save to database
+    setEditMode(false);
+    alert("Stats updated! (This would save to DB in production)");
+  };
+
+  const handleReset = () => {
+    setEditStats(stats);
+    setEditMode(false);
+  };
+
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-      {/* Stat Cards */}
-      <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-gray-600 font-semibold text-sm">
-              Total Products
-            </p>
-            <p className="text-4xl font-bold text-indigo-700 mt-2">
-              {stats.totalProducts}
-            </p>
-          </div>
-          <span className="text-3xl">📦</span>
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Dashboard Overview</h2>
+        <div className="flex gap-2">
+          {editMode ? (
+            <>
+              <button
+                onClick={handleSave}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
+              >
+                ✓ Save
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg font-semibold hover:bg-gray-700"
+              >
+                ✕ Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setEditMode(true)}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700"
+            >
+              ✎ Edit Stats
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-gray-600 font-semibold text-sm">Total Orders</p>
-            <p className="text-4xl font-bold text-green-700 mt-2">
-              {stats.totalOrders}
-            </p>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {/* Total Products Card */}
+        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm hover:shadow-md transition">
+          <div className="flex justify-between items-start">
+            <div className="w-full">
+              <p className="text-gray-600 font-semibold text-sm">
+                Total Products
+              </p>
+              {editMode ? (
+                <input
+                  type="number"
+                  value={editStats.totalProducts}
+                  onChange={(e) =>
+                    setEditStats({
+                      ...editStats,
+                      totalProducts: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full text-4xl font-bold text-indigo-700 mt-2 border border-indigo-300 px-2 py-1 rounded"
+                />
+              ) : (
+                <p className="text-4xl font-bold text-indigo-700 mt-2">
+                  {editStats.totalProducts}
+                </p>
+              )}
+            </div>
+            <span className="text-3xl">📦</span>
           </div>
-          <span className="text-3xl">🛒</span>
         </div>
-      </div>
 
-      <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-gray-600 font-semibold text-sm">Total Revenue</p>
-            <p className="text-4xl font-bold text-blue-700 mt-2">
-              TK {stats.totalRevenue.toFixed(2)}
-            </p>
+        {/* Total Orders Card */}
+        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm hover:shadow-md transition">
+          <div className="flex justify-between items-start">
+            <div className="w-full">
+              <p className="text-gray-600 font-semibold text-sm">
+                Total Orders
+              </p>
+              {editMode ? (
+                <input
+                  type="number"
+                  value={editStats.totalOrders}
+                  onChange={(e) =>
+                    setEditStats({
+                      ...editStats,
+                      totalOrders: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full text-4xl font-bold text-green-700 mt-2 border border-green-300 px-2 py-1 rounded"
+                />
+              ) : (
+                <p className="text-4xl font-bold text-green-700 mt-2">
+                  {editStats.totalOrders}
+                </p>
+              )}
+            </div>
+            <span className="text-3xl">🛒</span>
           </div>
-          <span className="text-3xl">💰</span>
         </div>
-      </div>
 
-      <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-gray-600 font-semibold text-sm">Total Users</p>
-            <p className="text-4xl font-bold text-purple-700 mt-2">
-              {stats.totalUsers}
-            </p>
+        {/* Total Revenue Card */}
+        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm hover:shadow-md transition">
+          <div className="flex justify-between items-start">
+            <div className="w-full">
+              <p className="text-gray-600 font-semibold text-sm">
+                Total Revenue
+              </p>
+              {editMode ? (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editStats.totalRevenue}
+                  onChange={(e) =>
+                    setEditStats({
+                      ...editStats,
+                      totalRevenue: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full text-4xl font-bold text-blue-700 mt-2 border border-blue-300 px-2 py-1 rounded"
+                />
+              ) : (
+                <p className="text-4xl font-bold text-blue-700 mt-2">
+                  TK {editStats.totalRevenue.toFixed(2)}
+                </p>
+              )}
+            </div>
+            <span className="text-3xl">💰</span>
           </div>
-          <span className="text-3xl">👥</span>
+        </div>
+
+        {/* Total Users Card */}
+        <div className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-sm hover:shadow-md transition">
+          <div className="flex justify-between items-start">
+            <div className="w-full">
+              <p className="text-gray-600 font-semibold text-sm">Total Users</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  value={editStats.totalUsers}
+                  onChange={(e) =>
+                    setEditStats({
+                      ...editStats,
+                      totalUsers: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full text-4xl font-bold text-purple-700 mt-2 border border-purple-300 px-2 py-1 rounded"
+                />
+              ) : (
+                <p className="text-4xl font-bold text-purple-700 mt-2">
+                  {editStats.totalUsers}
+                </p>
+              )}
+            </div>
+            <span className="text-3xl">👥</span>
+          </div>
         </div>
       </div>
     </div>
@@ -423,10 +539,12 @@ function UsersTab() {
     phone: string;
     address: string;
     role: string;
+    blocked?: boolean;
   }
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [blockingUserId, setBlockingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const loadUsers = async () => {
@@ -440,6 +558,7 @@ function UsersTab() {
           phone: doc.data().phone || "N/A",
           address: doc.data().address || "N/A",
           role: doc.data().role || "customer",
+          blocked: doc.data().blocked || false,
         }));
         setUsers(usersData);
       } catch (error) {
@@ -451,6 +570,35 @@ function UsersTab() {
 
     loadUsers();
   }, []);
+
+  const handleBlockUnblock = async (
+    userId: string,
+    currentBlockStatus: boolean,
+  ) => {
+    setBlockingUserId(userId);
+    try {
+      const userRef = doc(db, "users", userId);
+      await updateDoc(userRef, {
+        blocked: !currentBlockStatus,
+      });
+
+      // Update local state
+      setUsers(
+        users.map((user) =>
+          user.id === userId ? { ...user, blocked: !currentBlockStatus } : user,
+        ),
+      );
+
+      alert(
+        `User ${currentBlockStatus ? "unblocked" : "blocked"} successfully!`,
+      );
+    } catch (error) {
+      console.error("Failed to block/unblock user:", error);
+      alert("Failed to update user status. Please try again.");
+    } finally {
+      setBlockingUserId(null);
+    }
+  };
 
   if (loading) {
     return <div className="text-gray-600 font-semibold">Loading users...</div>;
@@ -474,18 +622,34 @@ function UsersTab() {
                 <th className="px-4 py-3 font-bold text-gray-900">Phone</th>
                 <th className="px-4 py-3 font-bold text-gray-900">Address</th>
                 <th className="px-4 py-3 font-bold text-gray-900">Role</th>
+                <th className="px-4 py-3 font-bold text-gray-900">Status</th>
+                <th className="px-4 py-3 font-bold text-gray-900">Action</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => (
                 <tr
                   key={user.id}
-                  className="border-b border-gray-200 hover:bg-gray-50"
+                  className={`border-b border-gray-200 hover:bg-gray-50 ${
+                    user.blocked ? "bg-red-50" : ""
+                  }`}
                 >
-                  <td className="px-4 py-3 font-semibold text-gray-900">
+                  <td
+                    className={`px-4 py-3 font-semibold ${
+                      user.blocked
+                        ? "text-gray-500 line-through"
+                        : "text-gray-900"
+                    }`}
+                  >
                     {user.fullName}
                   </td>
-                  <td className="px-4 py-3 font-semibold text-gray-700">
+                  <td
+                    className={`px-4 py-3 font-semibold ${
+                      user.blocked
+                        ? "text-gray-500 line-through"
+                        : "text-gray-700"
+                    }`}
+                  >
                     {user.email}
                   </td>
                   <td className="px-4 py-3 font-semibold text-gray-700">
@@ -504,6 +668,36 @@ function UsersTab() {
                     >
                       {user.role}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`px-3 py-1 rounded-full font-bold text-sm ${
+                        user.blocked
+                          ? "bg-red-100 text-red-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      {user.blocked ? "Blocked" : "Active"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() =>
+                        handleBlockUnblock(user.id, user.blocked || false)
+                      }
+                      disabled={blockingUserId === user.id}
+                      className={`px-3 py-1 rounded font-bold text-sm transition-colors ${
+                        user.blocked
+                          ? "bg-green-600 hover:bg-green-700 text-white"
+                          : "bg-red-600 hover:bg-red-700 text-white"
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {blockingUserId === user.id
+                        ? "Loading..."
+                        : user.blocked
+                          ? "Unblock"
+                          : "Block"}
+                    </button>
                   </td>
                 </tr>
               ))}
